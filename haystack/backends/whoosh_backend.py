@@ -33,7 +33,7 @@ except ImportError:
 from whoosh.analysis import StemmingAnalyzer
 from whoosh.fields import Schema, IDLIST, STORED, TEXT, KEYWORD, NUMERIC, BOOLEAN, DATETIME, NGRAM, NGRAMWORDS
 from whoosh.fields import ID as WHOOSH_ID
-from whoosh import index
+from whoosh import index, scoring
 from whoosh.qparser import QueryParser
 from whoosh.filedb.filestore import FileStorage, RamStorage
 from whoosh.searching import ResultsPage
@@ -48,6 +48,12 @@ if not hasattr(whoosh, '__version__') or whoosh.__version__ < (1, 8, 4):
 DATETIME_REGEX = re.compile('^(?P<year>\d{4})-(?P<month>\d{2})-(?P<day>\d{2})T(?P<hour>\d{2}):(?P<minute>\d{2}):(?P<second>\d{2})(\.\d{3,6}Z?)?$')
 LOCALS = threading.local()
 LOCALS.RAM_STORE = None
+
+
+def pos_weight_score_fn(searcher, fieldname, text, matcher):
+    poses = matcher.value_as("positions")
+    weight = matcher.value_as("weight")
+    return 1.0 / (poses[0] + 1) * weight
 
 
 class WhooshSearchBackend(BaseSearchBackend):
@@ -366,58 +372,58 @@ class WhooshSearchBackend(BaseSearchBackend):
         self.index = self.index.refresh()
 
         if self.index.doc_count():
-            searcher = self.index.searcher()
-            parsed_query = self.parser.parse(query_string)
+            pos_weighting = scoring.FunctionWeighting(pos_weight_score_fn)
+            with self.index.searcher(weighting=pos_weighting) as searcher:
+                parsed_query = self.parser.parse(query_string)
 
-            # In the event of an invalid/stopworded query, recover gracefully.
-            if parsed_query is None:
-                return {
-                    'results': [],
-                    'hits': 0,
-                }
+                # In the event of an invalid/stopworded query, recover gracefully.
+                if parsed_query is None:
+                    return {
+                        'results': [],
+                        'hits': 0,
+                    }
 
-            # Prevent against Whoosh throwing an error. Requires an end_offset
-            # greater than 0.
-            if not end_offset is None and end_offset <= 0:
-                end_offset = 1
+                # Prevent against Whoosh throwing an error. Requires an end_offset
+                # greater than 0.
+                if not end_offset is None and end_offset <= 0:
+                    end_offset = 1
 
-            raw_results = searcher.search(parsed_query, limit=end_offset, sortedby=sort_by, reverse=reverse)
+                raw_results = searcher.search(parsed_query, limit=end_offset, sortedby=sort_by, reverse=reverse)
 
-            # Handle the case where the results have been narrowed.
-            if narrowed_results is not None:
-                raw_results.filter(narrowed_results)
+                # Handle the case where the results have been narrowed.
+                if narrowed_results is not None:
+                    raw_results.filter(narrowed_results)
 
-            # Determine the page.
-            page_num = 0
+                # Determine the page.
+                page_num = 0
 
-            if end_offset is None:
-                end_offset = 1000000
+                if end_offset is None:
+                    end_offset = 1000000
 
-            if start_offset is None:
-                start_offset = 0
+                if start_offset is None:
+                    start_offset = 0
 
-            page_length = end_offset - start_offset
+                page_length = end_offset - start_offset
 
-            if page_length and page_length > 0:
-                page_num = start_offset / page_length
+                if page_length and page_length > 0:
+                    page_num = start_offset / page_length
 
-            # Increment because Whoosh uses 1-based page numbers.
-            page_num += 1
+                # Increment because Whoosh uses 1-based page numbers.
+                page_num += 1
 
-            try:
-                raw_page = ResultsPage(raw_results, page_num, page_length)
-            except ValueError:
-                if not self.silently_fail:
-                    raise
+                try:
+                    raw_page = ResultsPage(raw_results, page_num, page_length)
+                except ValueError:
+                    if not self.silently_fail:
+                        raise
 
-                return {
-                    'results': [],
-                    'hits': 0,
-                    'spelling_suggestion': None,
-                }
+                    return {
+                        'results': [],
+                        'hits': 0,
+                        'spelling_suggestion': None,
+                    }
 
-            results = self._process_results(raw_page, highlight=highlight, query_string=query_string, spelling_query=spelling_query, result_class=result_class)
-            searcher.close()
+                results = self._process_results(raw_page, highlight=highlight, query_string=query_string, spelling_query=spelling_query, result_class=result_class)
 
             if hasattr(narrow_searcher, 'close'):
                 narrow_searcher.close()

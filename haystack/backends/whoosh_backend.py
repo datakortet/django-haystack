@@ -56,6 +56,10 @@ def pos_weight_score_fn(searcher, fieldname, text, matcher):
     return 1.0 / (poses[0] + 1) * weight
 
 
+def max_quality_fn():
+    return 1
+
+
 class WhooshSearchBackend(BaseSearchBackend):
     # Word reserved by Whoosh for special use.
     RESERVED_WORDS = (

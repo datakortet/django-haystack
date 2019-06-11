@@ -53,6 +53,9 @@ LOCALS.RAM_STORE = None
 def pos_weight_score_fn(searcher, fieldname, text, matcher):
     poses = matcher.value_as("positions")
     weight = matcher.value_as("weight")
+    early = 1.0 / (poses[0] + 1)
+    counts = len(poses)
+    return (early + counts) * weight
 
 
 class WhooshSearchBackend(BaseSearchBackend):
